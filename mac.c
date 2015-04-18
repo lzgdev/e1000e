@@ -173,10 +173,6 @@ s32 e1000_check_alt_mac_addr_generic(struct e1000_hw *hw)
 	if (ret_val)
 		return ret_val;
 
-	/* not supported on 82573 */
-	if (hw->mac.type == e1000_82573)
-		return 0;
-
 	ret_val = e1000_read_nvm(hw, NVM_ALT_MAC_ADDR_PTR, 1,
 				 &nvm_alt_mac_addr_offset);
 	if (ret_val) {

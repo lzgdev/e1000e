@@ -34,29 +34,6 @@
 
 struct e1000_hw;
 
-#define E1000_DEV_ID_82571EB_COPPER		0x105E
-#define E1000_DEV_ID_82571EB_FIBER		0x105F
-#define E1000_DEV_ID_82571EB_SERDES		0x1060
-#define E1000_DEV_ID_82571EB_QUAD_COPPER	0x10A4
-#define E1000_DEV_ID_82571PT_QUAD_COPPER	0x10D5
-#define E1000_DEV_ID_82571EB_QUAD_FIBER		0x10A5
-#define E1000_DEV_ID_82571EB_QUAD_COPPER_LP	0x10BC
-#define E1000_DEV_ID_82571EB_SERDES_DUAL	0x10D9
-#define E1000_DEV_ID_82571EB_SERDES_QUAD	0x10DA
-#define E1000_DEV_ID_82572EI_COPPER		0x107D
-#define E1000_DEV_ID_82572EI_FIBER		0x107E
-#define E1000_DEV_ID_82572EI_SERDES		0x107F
-#define E1000_DEV_ID_82572EI			0x10B9
-#define E1000_DEV_ID_82573E			0x108B
-#define E1000_DEV_ID_82573E_IAMT		0x108C
-#define E1000_DEV_ID_82573L			0x109A
-#define E1000_DEV_ID_82574L			0x10D3
-#define E1000_DEV_ID_82574LA			0x10F6
-#define E1000_DEV_ID_82583V			0x150C
-#define E1000_DEV_ID_80003ES2LAN_COPPER_DPT	0x1096
-#define E1000_DEV_ID_80003ES2LAN_SERDES_DPT	0x1098
-#define E1000_DEV_ID_80003ES2LAN_COPPER_SPT	0x10BA
-#define E1000_DEV_ID_80003ES2LAN_SERDES_SPT	0x10BB
 #define E1000_DEV_ID_ICH8_82567V_3		0x1501
 #define E1000_DEV_ID_ICH8_IGP_M_AMT		0x1049
 #define E1000_DEV_ID_ICH8_IGP_AMT		0x104A
@@ -103,12 +80,6 @@ struct e1000_hw;
 #define E1000_ALT_MAC_ADDRESS_OFFSET_LAN1	3
 
 enum e1000_mac_type {
-	e1000_82571,
-	e1000_82572,
-	e1000_82573,
-	e1000_82574,
-	e1000_82583,
-	e1000_80003es2lan,
 	e1000_ich8lan,
 	e1000_ich9lan,
 	e1000_ich10lan,
@@ -644,10 +615,6 @@ struct e1000_dev_spec_82571 {
 	u32 smb_counter;
 };
 
-struct e1000_dev_spec_80003es2lan {
-	bool mdic_wa_enable;
-};
-
 struct e1000_shadow_ram {
 	u16 value;
 	bool modified;
@@ -677,8 +644,6 @@ struct e1000_hw {
 	struct e1000_host_mng_dhcp_cookie mng_cookie;
 
 	union {
-		struct e1000_dev_spec_82571 e82571;
-		struct e1000_dev_spec_80003es2lan e80003es2lan;
 		struct e1000_dev_spec_ich8lan ich8lan;
 	} dev_spec;
 };

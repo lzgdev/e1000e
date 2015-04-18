@@ -621,10 +621,7 @@ static int e1000_set_eeprom(struct net_device *netdev,
 	/* Update the checksum over the first part of the EEPROM if needed
 	 * and flush shadow RAM for applicable controllers
 	 */
-	if ((first_word <= NVM_CHECKSUM_REG) ||
-	    (hw->mac.type == e1000_82583) ||
-	    (hw->mac.type == e1000_82574) ||
-	    (hw->mac.type == e1000_82573))
+	if ((first_word <= NVM_CHECKSUM_REG))
 		ret_val = e1000e_update_nvm_checksum(hw);
 
 out:
@@ -841,11 +838,6 @@ static int e1000_reg_test(struct e1000_adapter *adapter, u64 *data)
 	 * on newer hardware that are r/w.
 	 */
 	switch (mac->type) {
-	case e1000_82571:
-	case e1000_82572:
-	case e1000_80003es2lan:
-		toggle = 0x7FFFF3FF;
-		break;
 	default:
 		toggle = 0x7FFFF033;
 		break;
@@ -1441,8 +1433,6 @@ static int e1000_set_82571_fiber_loopback(struct e1000_adapter *adapter)
 	u32 ctrl = er32(CTRL);
 	int link;
 
-	/* special requirements for 82571/82572 fiber adapters */
-
 	/* jump through hoops to make sure link is up because serdes
 	 * link is hardwired up
 	 */
@@ -1517,13 +1507,6 @@ static int e1000_setup_loopback_test(struct e1000_adapter *adapter)
 	if (hw->phy.media_type == e1000_media_type_fiber ||
 	    hw->phy.media_type == e1000_media_type_internal_serdes) {
 		switch (hw->mac.type) {
-		case e1000_80003es2lan:
-			return e1000_set_es2lan_mac_loopback(adapter);
-			break;
-		case e1000_82571:
-		case e1000_82572:
-			return e1000_set_82571_fiber_loopback(adapter);
-			break;
 		default:
 			rctl = er32(RCTL);
 			rctl |= E1000_RCTL_LBM_TCVR;
@@ -1548,23 +1531,6 @@ static void e1000_loopback_cleanup(struct e1000_adapter *adapter)
 	ew32(RCTL, rctl);
 
 	switch (hw->mac.type) {
-	case e1000_80003es2lan:
-		if (hw->phy.media_type == e1000_media_type_fiber ||
-		    hw->phy.media_type == e1000_media_type_internal_serdes) {
-			/* restore CTRL_EXT, stealing space from tx_fifo_head */
-			ew32(CTRL_EXT, adapter->tx_fifo_head);
-			adapter->tx_fifo_head = 0;
-		}
-		/* fall through */
-	case e1000_82571:
-	case e1000_82572:
-		if (hw->phy.media_type == e1000_media_type_fiber ||
-		    hw->phy.media_type == e1000_media_type_internal_serdes) {
-			ew32(SCTL, E1000_SCTL_DISABLE_SERDES_LOOPBACK);
-			e1e_flush();
-			usleep_range(10000, 20000);
-			break;
-		}
 		/* Fall Through */
 	default:
 		hw->mac.autoneg = 1;

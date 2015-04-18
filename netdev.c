@@ -1955,13 +1955,6 @@ static void e1000_configure_msix(struct e1000_adapter *adapter)
 
 	adapter->eiac_mask = 0;
 
-	/* Workaround issue with spurious interrupts on 82574 in MSI-X mode */
-	if (hw->mac.type == e1000_82574) {
-		u32 rfctl = er32(RFCTL);
-		rfctl |= E1000_RFCTL_ACK_DIS;
-		ew32(RFCTL, rfctl);
-	}
-
 	/* Configure Rx vector */
 	rx_ring->ims_val = E1000_IMS_RXQ0;
 	adapter->eiac_mask |= rx_ring->ims_val;
@@ -2844,41 +2837,6 @@ static void e1000_init_manageability_pt(struct e1000_adapter *adapter)
 	default:
 		manc2h |= (E1000_MANC2H_PORT_623 | E1000_MANC2H_PORT_664);
 		break;
-	case e1000_82574:
-	case e1000_82583:
-		/* Check if IPMI pass-through decision filter already exists;
-		 * if so, enable it.
-		 */
-		for (i = 0, j = 0; i < 8; i++) {
-			mdef = er32(MDEF(i));
-
-			/* Ignore filters with anything other than IPMI ports */
-			if (mdef & ~(E1000_MDEF_PORT_623 | E1000_MDEF_PORT_664))
-				continue;
-
-			/* Enable this decision filter in MANC2H */
-			if (mdef)
-				manc2h |= (1 << i);
-
-			j |= mdef;
-		}
-
-		if (j == (E1000_MDEF_PORT_623 | E1000_MDEF_PORT_664))
-			break;
-
-		/* Create new decision filter in an empty filter */
-		for (i = 0, j = 0; i < 8; i++)
-			if (er32(MDEF(i)) == 0) {
-				ew32(MDEF(i), (E1000_MDEF_PORT_623 |
-					       E1000_MDEF_PORT_664));
-				manc2h |= (1 << 1);
-				j++;
-				break;
-			}
-
-		if (!j)
-			e_warn("Unable to create IPMI pass-through filter\n");
-		break;
 	}
 
 	ew32(MANC2H, manc2h);
@@ -3461,13 +3419,6 @@ s32 e1000e_get_base_timinca(struct e1000_adapter *adapter, u32 *timinca)
 			break;
 		}
 		/* fall-through */
-	case e1000_82574:
-	case e1000_82583:
-		/* Stable 25MHz frequency */
-		incperiod = INCPERIOD_25MHz;
-		incvalue = INCVALUE_25MHz;
-		shift = INCVALUE_SHIFT_25MHz;
-		adapter->cc.shift = shift;
 		break;
 	default:
 		return -EINVAL;
@@ -4598,10 +4549,6 @@ static void e1000e_update_stats(struct e1000_adapter *adapter)
 			adapter->stats.dc += er32(DC);
 
 			hw->mac.collision_delta = er32(COLC);
-
-			if ((hw->mac.type != e1000_82574) &&
-			    (hw->mac.type != e1000_82583))
-				adapter->stats.tncrs += er32(TNCRS);
 		}
 		adapter->stats.colc += hw->mac.collision_delta;
 	}
@@ -6414,9 +6361,6 @@ static void e1000_eeprom_checks(struct e1000_adapter *adapter)
 	int ret_val;
 	u16 buf = 0;
 
-	if (hw->mac.type != e1000_82573)
-		return;
-
 	ret_val = e1000_read_nvm(hw, NVM_INIT_CONTROL2_REG, 1, &buf);
 	le16_to_cpus(&buf);
 	if (!ret_val && (!(buf & (1 << 0)))) {
@@ -6904,39 +6848,6 @@ static const struct pci_error_handlers e1000_err_handler = {
 };
 
 static DEFINE_PCI_DEVICE_TABLE(e1000_pci_tbl) = {
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82571EB_COPPER), board_82571 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82571EB_FIBER), board_82571 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82571EB_QUAD_COPPER), board_82571 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82571EB_QUAD_COPPER_LP),
-	  board_82571 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82571EB_QUAD_FIBER), board_82571 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82571EB_SERDES), board_82571 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82571EB_SERDES_DUAL), board_82571 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82571EB_SERDES_QUAD), board_82571 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82571PT_QUAD_COPPER), board_82571 },
-
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82572EI), board_82572 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82572EI_COPPER), board_82572 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82572EI_FIBER), board_82572 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82572EI_SERDES), board_82572 },
-
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82573E), board_82573 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82573E_IAMT), board_82573 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82573L), board_82573 },
-
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82574L), board_82574 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82574LA), board_82574 },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82583V), board_82583 },
-
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_80003ES2LAN_COPPER_DPT),
-	  board_80003es2lan },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_80003ES2LAN_COPPER_SPT),
-	  board_80003es2lan },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_80003ES2LAN_SERDES_DPT),
-	  board_80003es2lan },
-	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_80003ES2LAN_SERDES_SPT),
-	  board_80003es2lan },
-
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_ICH8_IFE), board_ich8lan },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_ICH8_IFE_G), board_ich8lan },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_ICH8_IFE_GT), board_ich8lan },

@@ -231,10 +231,6 @@ void e1000e_ptp_init(struct e1000_adapter *adapter)
 			break;
 		}
 		/* fall-through */
-	case e1000_82574:
-	case e1000_82583:
-		adapter->ptp_clock_info.max_adj = 600000000 - 1;
-		break;
 	default:
 		break;
 	}
