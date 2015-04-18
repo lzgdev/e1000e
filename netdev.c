@@ -65,12 +65,14 @@ module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none,...,16=all)");
 
 static const struct e1000_info *e1000_info_tbl[] = {
+	/*
 	[board_82571]		= &e1000_82571_info,
 	[board_82572]		= &e1000_82572_info,
 	[board_82573]		= &e1000_82573_info,
 	[board_82574]		= &e1000_82574_info,
 	[board_82583]		= &e1000_82583_info,
 	[board_80003es2lan]	= &e1000_es2_info,
+	// */
 	[board_ich8lan]		= &e1000_ich8_info,
 	[board_ich9lan]		= &e1000_ich9_info,
 	[board_ich10lan]	= &e1000_ich10_info,
@@ -4439,21 +4441,6 @@ static int e1000_set_mac(struct net_device *netdev, void *p)
 
 	hw->mac.ops.rar_set(&adapter->hw, adapter->hw.mac.addr, 0);
 
-	if (adapter->flags & FLAG_RESET_OVERWRITES_LAA) {
-		/* activate the work around */
-		e1000e_set_laa_state_82571(&adapter->hw, 1);
-
-		/* Hold a copy of the LAA in RAR[14] This is done so that
-		 * between the time RAR[0] gets clobbered  and the time it
-		 * gets fixed (in e1000_watchdog), the actual LAA is in one
-		 * of the RARs and no incoming packets directed to this port
-		 * are dropped. Eventually the LAA will be in RAR[0] and
-		 * RAR[14]
-		 */
-		hw->mac.ops.rar_set(&adapter->hw, adapter->hw.mac.addr,
-				    adapter->hw.mac.rar_entry_count - 1);
-	}
-
 	return 0;
 }
 
@@ -4795,24 +4782,6 @@ static void e1000e_enable_receives(struct e1000_adapter *adapter)
 	}
 }
 
-static void e1000e_check_82574_phy_workaround(struct e1000_adapter *adapter)
-{
-	struct e1000_hw *hw = &adapter->hw;
-
-	/* With 82574 controllers, PHY needs to be checked periodically
-	 * for hung state and reset, if two calls return true
-	 */
-	if (e1000_check_phy_82574(hw))
-		adapter->phy_hang_count++;
-	else
-		adapter->phy_hang_count = 0;
-
-	if (adapter->phy_hang_count > 1) {
-		adapter->phy_hang_count = 0;
-		schedule_work(&adapter->reset_task);
-	}
-}
-
 /**
  * e1000_watchdog - Timer Call-back
  * @data: pointer to adapter cast into an unsigned long
@@ -5032,15 +5001,6 @@ link_up:
 
 	/* Force detection of hung controller every watchdog period */
 	adapter->detect_tx_hung = true;
-
-	/* With 82571 controllers, LAA may be overwritten due to controller
-	 * reset from the other port. Set the appropriate LAA in RAR[0]
-	 */
-	if (e1000e_get_laa_state_82571(hw))
-		hw->mac.ops.rar_set(hw, adapter->hw.mac.addr, 0);
-
-	if (adapter->flags2 & FLAG2_CHECK_PHY_HANG)
-		e1000e_check_82574_phy_workaround(adapter);
 
 	/* Clear valid timestamp stuck in RXSTMPL/H due to a Rx error */
 	if (adapter->hwtstamp_config.rx_filter != HWTSTAMP_FILTER_NONE) {
