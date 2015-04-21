@@ -2213,7 +2213,7 @@ static void e1000_restore_vlan(struct e1000_adapter *adapter)
 static void e1000_init_manageability_pt(struct e1000_adapter *adapter)
 {
 	struct e1000_hw *hw = &adapter->hw;
-	u32 manc, manc2h, mdef, i, j;
+	u32 manc, manc2h;
 
 	if (!(adapter->flags & FLAG_MNG_PT_ENABLED))
 		return;
