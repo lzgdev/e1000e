@@ -2290,7 +2290,6 @@ static void e1000_configure_tx(struct e1000_adapter *adapter)
 		/* set the speed mode bit, we'll clear it if we're not at
 		 * gigabit link later
 		 */
-#define SPEED_MODE_BIT (1 << 21)
 		tarc |= SPEED_MODE_BIT;
 		ew32(TARC(0), tarc);
 	}
@@ -2771,3 +2770,535 @@ static void e1000e_setup_rss_hash(struct e1000_adapter *adapter)
 
 	ew32(MRQC, mrqc);
 }
+
+#define E1000_TX_FLAGS_CSUM		0x00000001
+#define E1000_TX_FLAGS_VLAN		0x00000002
+#define E1000_TX_FLAGS_TSO		0x00000004
+#define E1000_TX_FLAGS_IPV4		0x00000008
+#define E1000_TX_FLAGS_NO_FCS		0x00000010
+#define E1000_TX_FLAGS_HWTSTAMP		0x00000020
+#define E1000_TX_FLAGS_VLAN_MASK	0xffff0000
+#define E1000_TX_FLAGS_VLAN_SHIFT	16
+
+static int e1000_tso(struct e1000_ring *tx_ring, struct sk_buff *skb)
+{
+	struct e1000_context_desc *context_desc;
+	struct e1000_buffer *buffer_info;
+	unsigned int i;
+	u32 cmd_length = 0;
+	u16 ipcse = 0, mss;
+	u8 ipcss, ipcso, tucss, tucso, hdr_len;
+
+	if (!skb_is_gso(skb))
+		return 0;
+
+	if (skb_header_cloned(skb)) {
+		int err = pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
+
+		if (err)
+			return err;
+	}
+
+	hdr_len = skb_transport_offset(skb) + tcp_hdrlen(skb);
+	mss = skb_shinfo(skb)->gso_size;
+	if (skb->protocol == htons(ETH_P_IP)) {
+		struct iphdr *iph = ip_hdr(skb);
+		iph->tot_len = 0;
+		iph->check = 0;
+		tcp_hdr(skb)->check = ~csum_tcpudp_magic(iph->saddr, iph->daddr,
+							 0, IPPROTO_TCP, 0);
+		cmd_length = E1000_TXD_CMD_IP;
+		ipcse = skb_transport_offset(skb) - 1;
+	} else if (skb_is_gso_v6(skb)) {
+		ipv6_hdr(skb)->payload_len = 0;
+		tcp_hdr(skb)->check = ~csum_ipv6_magic(&ipv6_hdr(skb)->saddr,
+						       &ipv6_hdr(skb)->daddr,
+						       0, IPPROTO_TCP, 0);
+		ipcse = 0;
+	}
+	ipcss = skb_network_offset(skb);
+	ipcso = (void *)&(ip_hdr(skb)->check) - (void *)skb->data;
+	tucss = skb_transport_offset(skb);
+	tucso = (void *)&(tcp_hdr(skb)->check) - (void *)skb->data;
+
+	cmd_length |= (E1000_TXD_CMD_DEXT | E1000_TXD_CMD_TSE |
+		       E1000_TXD_CMD_TCP | (skb->len - (hdr_len)));
+
+	i = tx_ring->next_to_use;
+	context_desc = E1000_CONTEXT_DESC(*tx_ring, i);
+	buffer_info = &tx_ring->buffer_info[i];
+
+	context_desc->lower_setup.ip_fields.ipcss = ipcss;
+	context_desc->lower_setup.ip_fields.ipcso = ipcso;
+	context_desc->lower_setup.ip_fields.ipcse = cpu_to_le16(ipcse);
+	context_desc->upper_setup.tcp_fields.tucss = tucss;
+	context_desc->upper_setup.tcp_fields.tucso = tucso;
+	context_desc->upper_setup.tcp_fields.tucse = 0;
+	context_desc->tcp_seg_setup.fields.mss = cpu_to_le16(mss);
+	context_desc->tcp_seg_setup.fields.hdr_len = hdr_len;
+	context_desc->cmd_and_length = cpu_to_le32(cmd_length);
+
+	buffer_info->time_stamp = jiffies;
+	buffer_info->next_to_watch = i;
+
+	i++;
+	if (i == tx_ring->count)
+		i = 0;
+	tx_ring->next_to_use = i;
+
+	return 1;
+}
+
+static bool e1000_tx_csum(struct e1000_ring *tx_ring, struct sk_buff *skb)
+{
+	struct e1000_adapter *adapter = tx_ring->adapter;
+	struct e1000_context_desc *context_desc;
+	struct e1000_buffer *buffer_info;
+	unsigned int i;
+	u8 css;
+	u32 cmd_len = E1000_TXD_CMD_DEXT;
+	__be16 protocol;
+
+	if (skb->ip_summed != CHECKSUM_PARTIAL)
+		return 0;
+
+	if (skb->protocol == cpu_to_be16(ETH_P_8021Q))
+		protocol = vlan_eth_hdr(skb)->h_vlan_encapsulated_proto;
+	else
+		protocol = skb->protocol;
+
+	switch (protocol) {
+	case cpu_to_be16(ETH_P_IP):
+		if (ip_hdr(skb)->protocol == IPPROTO_TCP)
+			cmd_len |= E1000_TXD_CMD_TCP;
+		break;
+	case cpu_to_be16(ETH_P_IPV6):
+		/* XXX not handling all IPV6 headers */
+		if (ipv6_hdr(skb)->nexthdr == IPPROTO_TCP)
+			cmd_len |= E1000_TXD_CMD_TCP;
+		break;
+	default:
+		if (unlikely(net_ratelimit()))
+			e_warn("checksum_partial proto=%x!\n",
+			       be16_to_cpu(protocol));
+		break;
+	}
+
+	css = skb_checksum_start_offset(skb);
+
+	i = tx_ring->next_to_use;
+	buffer_info = &tx_ring->buffer_info[i];
+	context_desc = E1000_CONTEXT_DESC(*tx_ring, i);
+
+	context_desc->lower_setup.ip_config = 0;
+	context_desc->upper_setup.tcp_fields.tucss = css;
+	context_desc->upper_setup.tcp_fields.tucso = css + skb->csum_offset;
+	context_desc->upper_setup.tcp_fields.tucse = 0;
+	context_desc->tcp_seg_setup.data = 0;
+	context_desc->cmd_and_length = cpu_to_le32(cmd_len);
+
+	buffer_info->time_stamp = jiffies;
+	buffer_info->next_to_watch = i;
+
+	i++;
+	if (i == tx_ring->count)
+		i = 0;
+	tx_ring->next_to_use = i;
+
+	return 1;
+}
+
+static int e1000_tx_map(struct e1000_ring *tx_ring, struct sk_buff *skb,
+			unsigned int first, unsigned int max_per_txd,
+			unsigned int nr_frags)
+{
+	struct e1000_adapter *adapter = tx_ring->adapter;
+	struct pci_dev *pdev = adapter->pdev;
+	struct e1000_buffer *buffer_info;
+	unsigned int len = skb_headlen(skb);
+	unsigned int offset = 0, size, count = 0, i;
+	unsigned int f, bytecount, segs;
+
+	i = tx_ring->next_to_use;
+
+	while (len) {
+		buffer_info = &tx_ring->buffer_info[i];
+		size = min(len, max_per_txd);
+
+		buffer_info->length = size;
+		buffer_info->time_stamp = jiffies;
+		buffer_info->next_to_watch = i;
+		buffer_info->dma = dma_map_single(&pdev->dev,
+						  skb->data + offset,
+						  size, DMA_TO_DEVICE);
+		buffer_info->mapped_as_page = false;
+		if (dma_mapping_error(&pdev->dev, buffer_info->dma))
+			goto dma_error;
+
+		len -= size;
+		offset += size;
+		count++;
+
+		if (len) {
+			i++;
+			if (i == tx_ring->count)
+				i = 0;
+		}
+	}
+
+	for (f = 0; f < nr_frags; f++) {
+		const struct skb_frag_struct *frag;
+
+		frag = &skb_shinfo(skb)->frags[f];
+		len = skb_frag_size(frag);
+		offset = 0;
+
+		while (len) {
+			i++;
+			if (i == tx_ring->count)
+				i = 0;
+
+			buffer_info = &tx_ring->buffer_info[i];
+			size = min(len, max_per_txd);
+
+			buffer_info->length = size;
+			buffer_info->time_stamp = jiffies;
+			buffer_info->next_to_watch = i;
+			buffer_info->dma = skb_frag_dma_map(&pdev->dev, frag,
+							    offset, size,
+							    DMA_TO_DEVICE);
+			buffer_info->mapped_as_page = true;
+			if (dma_mapping_error(&pdev->dev, buffer_info->dma))
+				goto dma_error;
+
+			len -= size;
+			offset += size;
+			count++;
+		}
+	}
+
+	segs = skb_shinfo(skb)->gso_segs ? : 1;
+	/* multiply data chunks by size of headers */
+	bytecount = ((segs - 1) * skb_headlen(skb)) + skb->len;
+
+	tx_ring->buffer_info[i].skb = skb;
+	tx_ring->buffer_info[i].segs = segs;
+	tx_ring->buffer_info[i].bytecount = bytecount;
+	tx_ring->buffer_info[first].next_to_watch = i;
+
+	return count;
+
+dma_error:
+	dev_err(&pdev->dev, "Tx DMA map failed\n");
+	buffer_info->dma = 0;
+	if (count)
+		count--;
+
+	while (count--) {
+		if (i == 0)
+			i += tx_ring->count;
+		i--;
+		buffer_info = &tx_ring->buffer_info[i];
+		e1000_put_txbuf(tx_ring, buffer_info);
+	}
+
+	return 0;
+}
+
+static void e1000_tx_queue(struct e1000_ring *tx_ring, int tx_flags, int count)
+{
+	struct e1000_adapter *adapter = tx_ring->adapter;
+	struct e1000_tx_desc *tx_desc = NULL;
+	struct e1000_buffer *buffer_info;
+	u32 txd_upper = 0, txd_lower = E1000_TXD_CMD_IFCS;
+	unsigned int i;
+
+	if (tx_flags & E1000_TX_FLAGS_TSO) {
+		txd_lower |= E1000_TXD_CMD_DEXT | E1000_TXD_DTYP_D |
+		    E1000_TXD_CMD_TSE;
+		txd_upper |= E1000_TXD_POPTS_TXSM << 8;
+
+		if (tx_flags & E1000_TX_FLAGS_IPV4)
+			txd_upper |= E1000_TXD_POPTS_IXSM << 8;
+	}
+
+	if (tx_flags & E1000_TX_FLAGS_CSUM) {
+		txd_lower |= E1000_TXD_CMD_DEXT | E1000_TXD_DTYP_D;
+		txd_upper |= E1000_TXD_POPTS_TXSM << 8;
+	}
+
+	if (tx_flags & E1000_TX_FLAGS_VLAN) {
+		txd_lower |= E1000_TXD_CMD_VLE;
+		txd_upper |= (tx_flags & E1000_TX_FLAGS_VLAN_MASK);
+	}
+
+	if (unlikely(tx_flags & E1000_TX_FLAGS_NO_FCS))
+		txd_lower &= ~(E1000_TXD_CMD_IFCS);
+
+	if (unlikely(tx_flags & E1000_TX_FLAGS_HWTSTAMP)) {
+		txd_lower |= E1000_TXD_CMD_DEXT | E1000_TXD_DTYP_D;
+		txd_upper |= E1000_TXD_EXTCMD_TSTAMP;
+	}
+
+	i = tx_ring->next_to_use;
+
+	do {
+		buffer_info = &tx_ring->buffer_info[i];
+		tx_desc = E1000_TX_DESC(*tx_ring, i);
+		tx_desc->buffer_addr = cpu_to_le64(buffer_info->dma);
+		tx_desc->lower.data = cpu_to_le32(txd_lower |
+						  buffer_info->length);
+		tx_desc->upper.data = cpu_to_le32(txd_upper);
+
+		i++;
+		if (i == tx_ring->count)
+			i = 0;
+	} while (--count > 0);
+
+	tx_desc->lower.data |= cpu_to_le32(adapter->txd_cmd);
+
+	/* txd_cmd re-enables FCS, so we'll re-disable it here as desired. */
+	if (unlikely(tx_flags & E1000_TX_FLAGS_NO_FCS))
+		tx_desc->lower.data &= ~(cpu_to_le32(E1000_TXD_CMD_IFCS));
+
+	/* Force memory writes to complete before letting h/w
+	 * know there are new descriptors to fetch.  (Only
+	 * applicable for weak-ordered memory model archs,
+	 * such as IA-64).
+	 */
+	wmb();
+
+	tx_ring->next_to_use = i;
+
+	if (adapter->flags2 & FLAG2_PCIM2PCI_ARBITER_WA)
+		e1000e_update_tdt_wa(tx_ring, i);
+	else
+		writel(i, tx_ring->tail);
+
+	/* we need this if more than one processor can write to our tail
+	 * at a time, it synchronizes IO on IA64/Altix systems
+	 */
+	mmiowb();
+}
+
+#define MINIMUM_DHCP_PACKET_SIZE 282
+static int e1000_transfer_dhcp_info(struct e1000_adapter *adapter,
+				    struct sk_buff *skb)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	u16 length, offset;
+
+	if (vlan_tx_tag_present(skb) &&
+	    !((vlan_tx_tag_get(skb) == adapter->hw.mng_cookie.vlan_id) &&
+	      (adapter->hw.mng_cookie.status &
+	       E1000_MNG_DHCP_COOKIE_STATUS_VLAN)))
+		return 0;
+
+	if (skb->len <= MINIMUM_DHCP_PACKET_SIZE)
+		return 0;
+
+	if (((struct ethhdr *)skb->data)->h_proto != htons(ETH_P_IP))
+		return 0;
+
+	{
+		const struct iphdr *ip = (struct iphdr *)((u8 *)skb->data + 14);
+		struct udphdr *udp;
+
+		if (ip->protocol != IPPROTO_UDP)
+			return 0;
+
+		udp = (struct udphdr *)((u8 *)ip + (ip->ihl << 2));
+		if (ntohs(udp->dest) != 67)
+			return 0;
+
+		offset = (u8 *)udp + 8 - skb->data;
+		length = skb->len - offset;
+		return e1000e_mng_write_dhcp_info(hw, (u8 *)udp + 8, length);
+	}
+
+	return 0;
+}
+
+static int __e1000_maybe_stop_tx(struct e1000_ring *tx_ring, int size)
+{
+	struct e1000_adapter *adapter = tx_ring->adapter;
+
+	netif_stop_queue(adapter->netdev);
+	/* Herbert's original patch had:
+	 *  smp_mb__after_netif_stop_queue();
+	 * but since that doesn't exist yet, just open code it.
+	 */
+	smp_mb();
+
+	/* We need to check again in a case another CPU has just
+	 * made room available.
+	 */
+	if (e1000_desc_unused(tx_ring) < size)
+		return -EBUSY;
+
+	/* A reprieve! */
+	netif_start_queue(adapter->netdev);
+	++adapter->restart_queue;
+	return 0;
+}
+
+static int e1000_maybe_stop_tx(struct e1000_ring *tx_ring, int size)
+{
+	BUG_ON(size > tx_ring->count);
+
+	if (e1000_desc_unused(tx_ring) >= size)
+		return 0;
+	return __e1000_maybe_stop_tx(tx_ring, size);
+}
+
+static netdev_tx_t e1000_xmit_frame(struct sk_buff *skb,
+				    struct net_device *netdev)
+{
+	struct e1000_adapter *adapter = netdev_priv(netdev);
+	struct e1000_ring *tx_ring = adapter->tx_ring;
+	unsigned int first;
+	unsigned int tx_flags = 0;
+	unsigned int len = skb_headlen(skb);
+	unsigned int nr_frags;
+	unsigned int mss;
+	int count = 0;
+	int tso;
+	unsigned int f;
+
+	if (test_bit(__E1000_DOWN, &adapter->state)) {
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
+	}
+
+	if (skb->len <= 0) {
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
+	}
+
+	/* The minimum packet size with TCTL.PSP set is 17 bytes so
+	 * pad skb in order to meet this minimum size requirement
+	 */
+	if (unlikely(skb->len < 17)) {
+		if (skb_pad(skb, 17 - skb->len))
+			return NETDEV_TX_OK;
+		skb->len = 17;
+		skb_set_tail_pointer(skb, 17);
+	}
+
+	mss = skb_shinfo(skb)->gso_size;
+	if (mss) {
+		u8 hdr_len;
+
+		/* TSO Workaround for 82571/2/3 Controllers -- if skb->data
+		 * points to just header, pull a few bytes of payload from
+		 * frags into skb->data
+		 */
+		hdr_len = skb_transport_offset(skb) + tcp_hdrlen(skb);
+		/* we do this workaround for ES2LAN, but it is un-necessary,
+		 * avoiding it could save a lot of cycles
+		 */
+		if (skb->data_len && (hdr_len == len)) {
+			unsigned int pull_size;
+
+			pull_size = min_t(unsigned int, 4, skb->data_len);
+			if (!__pskb_pull_tail(skb, pull_size)) {
+				e_err("__pskb_pull_tail failed.\n");
+				dev_kfree_skb_any(skb);
+				return NETDEV_TX_OK;
+			}
+			len = skb_headlen(skb);
+		}
+	}
+
+	/* reserve a descriptor for the offload context */
+	if ((mss) || (skb->ip_summed == CHECKSUM_PARTIAL))
+		count++;
+	count++;
+
+	count += DIV_ROUND_UP(len, adapter->tx_fifo_limit);
+
+	nr_frags = skb_shinfo(skb)->nr_frags;
+	for (f = 0; f < nr_frags; f++)
+		count += DIV_ROUND_UP(skb_frag_size(&skb_shinfo(skb)->frags[f]),
+				      adapter->tx_fifo_limit);
+
+	if (adapter->hw.mac.tx_pkt_filtering)
+		e1000_transfer_dhcp_info(adapter, skb);
+
+	/* need: count + 2 desc gap to keep tail from touching
+	 * head, otherwise try next time
+	 */
+	if (e1000_maybe_stop_tx(tx_ring, count + 2))
+		return NETDEV_TX_BUSY;
+
+	if (vlan_tx_tag_present(skb)) {
+		tx_flags |= E1000_TX_FLAGS_VLAN;
+		tx_flags |= (vlan_tx_tag_get(skb) << E1000_TX_FLAGS_VLAN_SHIFT);
+	}
+
+	first = tx_ring->next_to_use;
+
+	tso = e1000_tso(tx_ring, skb);
+	if (tso < 0) {
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
+	}
+
+	if (tso)
+		tx_flags |= E1000_TX_FLAGS_TSO;
+	else if (e1000_tx_csum(tx_ring, skb))
+		tx_flags |= E1000_TX_FLAGS_CSUM;
+
+	/* Old method was to assume IPv4 packet by default if TSO was enabled.
+	 * 82571 hardware supports TSO capabilities for IPv6 as well...
+	 * no longer assume, we must.
+	 */
+	if (skb->protocol == htons(ETH_P_IP))
+		tx_flags |= E1000_TX_FLAGS_IPV4;
+
+	if (unlikely(skb->no_fcs))
+		tx_flags |= E1000_TX_FLAGS_NO_FCS;
+
+	/* if count is 0 then mapping error has occurred */
+	count = e1000_tx_map(tx_ring, skb, first, adapter->tx_fifo_limit,
+			     nr_frags);
+	if (count) {
+		if (unlikely((skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP) &&
+			     !adapter->tx_hwtstamp_skb)) {
+			skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+			tx_flags |= E1000_TX_FLAGS_HWTSTAMP;
+			adapter->tx_hwtstamp_skb = skb_get(skb);
+			schedule_work(&adapter->tx_hwtstamp_work);
+		} else {
+			skb_tx_timestamp(skb);
+		}
+
+		netdev_sent_queue(netdev, skb->len);
+		e1000_tx_queue(tx_ring, tx_flags, count);
+		/* Make sure there is space in the ring for the next send. */
+		e1000_maybe_stop_tx(tx_ring,
+				    (MAX_SKB_FRAGS *
+				     DIV_ROUND_UP(PAGE_SIZE,
+						  adapter->tx_fifo_limit) + 2));
+	} else {
+		dev_kfree_skb_any(skb);
+		tx_ring->buffer_info[first].time_stamp = 0;
+		tx_ring->next_to_use = first;
+	}
+
+	return NETDEV_TX_OK;
+}
+
+/**
+ * e1000_tx_timeout - Respond to a Tx Hang
+ * @netdev: network interface device structure
+ **/
+static void e1000_tx_timeout(struct net_device *netdev)
+{
+	struct e1000_adapter *adapter = netdev_priv(netdev);
+
+	/* Do the reset outside of interrupt context */
+	adapter->tx_timeout_count++;
+	schedule_work(&adapter->reset_task);
+}
+
