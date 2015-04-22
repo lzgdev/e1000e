@@ -219,6 +219,41 @@ static void e1000_print_hw_hang(struct work_struct *work)
 }
 
 /**
+ * e1000e_rx_hwtstamp - utility function which checks for Rx time stamp
+ * @adapter: board private structure
+ * @status: descriptor extended error and status field
+ * @skb: particular skb to include time stamp
+ *
+ * If the time stamp is valid, convert it into the timecounter ns value
+ * and store that result into the shhwtstamps structure which is passed
+ * up the network stack.
+ **/
+static void e1000e_rx_hwtstamp(struct e1000_adapter *adapter, u32 status,
+			       struct sk_buff *skb)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	u64 rxstmp;
+
+	if (!(adapter->flags & FLAG_HAS_HW_TIMESTAMP) ||
+	    !(status & E1000_RXDEXT_STATERR_TST) ||
+	    !(er32(TSYNCRXCTL) & E1000_TSYNCRXCTL_VALID))
+		return;
+
+	/* The Rx time stamp registers contain the time stamp.  No other
+	 * received packet will be time stamped until the Rx time stamp
+	 * registers are read.  Because only one packet can be time stamped
+	 * at a time, the register values must belong to this packet and
+	 * therefore none of the other additional attributes need to be
+	 * compared.
+	 */
+	rxstmp = (u64)er32(RXSTMPL);
+	rxstmp |= (u64)er32(RXSTMPH) << 32;
+	e1000e_systim_to_hwtstamp(adapter, skb_hwtstamps(skb), rxstmp);
+
+	adapter->flags2 &= ~FLAG2_CHECK_RX_HWTSTAMP;
+}
+
+/**
  * e1000e_tx_hwtstamp_work - check for Tx time stamp
  * @work: pointer to work struct
  *
@@ -2875,8 +2910,7 @@ MODULE_VERSION(_E1000E_DRV_VERSION);
 /* netdev.c */
 
 #include "_netdev_rxtx.h"
-#include "_netdev_msi.h"
-
+#include "_netdev_intr.h"
 #include "_netdev_vlan.h"
 #include "_netdev_wd.h"
 
