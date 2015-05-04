@@ -1437,10 +1437,7 @@ set_itr_now:
 		    min(adapter->itr + (new_itr >> 2), new_itr) : new_itr;
 		adapter->itr = new_itr;
 		adapter->rx_ring->itr_val = new_itr;
-		if (adapter->msix_entries)
-			adapter->rx_ring->set_itr = 1;
-		else
-			e1000e_write_itr(adapter, new_itr);
+		e1000e_write_itr(adapter, new_itr);
 	}
 }
 
@@ -1458,14 +1455,7 @@ void e1000e_write_itr(struct e1000_adapter *adapter, u32 itr)
 	struct e1000_hw *hw = &adapter->hw;
 	u32 new_itr = itr ? 1000000000 / (itr * 256) : 0;
 
-	if (adapter->msix_entries) {
-		int vector;
-
-		for (vector = 0; vector < adapter->num_vectors; vector++)
-			writel(new_itr, hw->hw_addr + E1000_EITR_82574(vector));
-	} else {
-		ew32(ITR, new_itr);
-	}
+	ew32(ITR, new_itr);
 }
 
 /**
@@ -1511,8 +1501,6 @@ static int e1000e_poll(struct napi_struct *napi, int weight)
 
 	adapter = netdev_priv(poll_dev);
 
-	if (!adapter->msix_entries ||
-	    (adapter->rx_ring->ims_val & adapter->tx_ring->ims_val))
 		tx_cleaned = e1000_clean_tx_irq(adapter->tx_ring);
 
 	adapter->clean_rx(adapter->rx_ring, &work_done, weight);
@@ -1526,9 +1514,6 @@ static int e1000e_poll(struct napi_struct *napi, int weight)
 			e1000_set_itr(adapter);
 		napi_complete(napi);
 		if (!test_bit(__E1000_DOWN, &adapter->state)) {
-			if (adapter->msix_entries)
-				ew32(IMS, adapter->rx_ring->ims_val);
-			else
 				e1000_irq_enable(adapter);
 		}
 	}

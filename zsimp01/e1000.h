@@ -65,7 +65,6 @@ struct e1000_info;
 /* Interrupt modes, as used by the IntMode parameter */
 #define E1000E_INT_MODE_LEGACY		0
 #define E1000E_INT_MODE_MSI		1
-#define E1000E_INT_MODE_MSIX		2
 
 /* Tx/Rx descriptor defines */
 #define E1000_DEFAULT_TXD		256
@@ -316,7 +315,6 @@ struct e1000_adapter {
 
 	u32 msg_enable;
 	unsigned int num_vectors;
-	struct msix_entry *msix_entries;
 	int int_mode;
 	u32 eiac_mask;
 
@@ -409,7 +407,6 @@ s32 e1000e_get_base_timinca(struct e1000_adapter *adapter, u32 *timinca);
 #define FLAG_HAS_JUMBO_FRAMES             (1 << 7)
 #define FLAG_READ_ONLY_NVM                (1 << 8)
 #define FLAG_IS_ICH                       (1 << 9)
-#define FLAG_HAS_MSIX                     (1 << 10)
 #define FLAG_HAS_SMART_POWER_DOWN         (1 << 11)
 #define FLAG_IS_QUAD_PORT_A               (1 << 12)
 #define FLAG_IS_QUAD_PORT                 (1 << 13)

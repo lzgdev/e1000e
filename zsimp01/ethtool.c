@@ -983,12 +983,6 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 	*data = 0;
 
 	/* NOTE: we don't test MSI/MSI-X interrupts here, yet */
-	if (adapter->int_mode == E1000E_INT_MODE_MSIX) {
-		int_mode = adapter->int_mode;
-		e1000e_reset_interrupt_capability(adapter);
-		adapter->int_mode = E1000E_INT_MODE_LEGACY;
-		e1000e_set_interrupt_capability(adapter);
-	}
 	/* Hook up test interrupt handler just for this test */
 	if (!request_irq(irq, e1000_test_intr, IRQF_PROBE_SHARED, netdev->name,
 			 netdev)) {
@@ -1090,12 +1084,6 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 	free_irq(irq, netdev);
 
 out:
-	if (int_mode == E1000E_INT_MODE_MSIX) {
-		e1000e_reset_interrupt_capability(adapter);
-		adapter->int_mode = int_mode;
-		e1000e_set_interrupt_capability(adapter);
-	}
-
 	return ret_val;
 }
 

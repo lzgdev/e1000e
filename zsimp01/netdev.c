@@ -92,7 +92,6 @@ static netdev_tx_t e1000_xmit_frame(struct sk_buff *skb, struct net_device *netd
 
 static void e1000_tx_timeout(struct net_device *netdev);
 
-static void e1000_configure_msix(struct e1000_adapter *adapter);
 static void e1000_irq_disable(struct e1000_adapter *adapter);
 static void e1000_irq_enable(struct e1000_adapter *adapter);
 static int  e1000_request_irq(struct e1000_adapter *adapter);
@@ -813,17 +812,12 @@ int e1000e_up(struct e1000_adapter *adapter)
 
 	clear_bit(__E1000_DOWN, &adapter->state);
 
-	if (adapter->msix_entries)
-		e1000_configure_msix(adapter);
 	e1000_irq_enable(adapter);
 
 	netif_start_queue(adapter->netdev);
 
 	/* fire a link change interrupt to start the watchdog */
-	if (adapter->msix_entries)
-		ew32(ICS, E1000_ICS_LSC | E1000_ICR_OTHER);
-	else
-		ew32(ICS, E1000_ICS_LSC);
+	ew32(ICS, E1000_ICS_LSC);
 
 	return 0;
 }
@@ -1081,10 +1075,7 @@ static int e1000_open(struct net_device *netdev)
 	pm_runtime_put(&pdev->dev);
 
 	/* fire a link status change interrupt to start the watchdog */
-	if (adapter->msix_entries)
-		ew32(ICS, E1000_ICS_LSC | E1000_ICR_OTHER);
-	else
-		ew32(ICS, E1000_ICS_LSC);
+	ew32(ICS, E1000_ICS_LSC);
 
 	return 0;
 

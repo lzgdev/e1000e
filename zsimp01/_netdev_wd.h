@@ -207,9 +207,6 @@ link_up:
 	}
 
 	/* Cause software interrupt to ensure Rx ring is cleaned */
-	if (adapter->msix_entries)
-		ew32(ICS, adapter->rx_ring->ims_val);
-	else
 		ew32(ICS, E1000_ICS_RXDMT0);
 
 	/* flush pending descriptors to memory before detecting Tx hang */

@@ -1,7 +1,4 @@
 
-// _netdev_intr_msix.h
-static int e1000_request_msix(struct e1000_adapter *adapter);
-
 // _netdev_intr_msi.h
 static irqreturn_t e1000_intr_msi(int __always_unused irq, void *data);
 
@@ -10,11 +7,7 @@ static irqreturn_t e1000_intr(int __always_unused irq, void *data);
 
 void e1000e_reset_interrupt_capability(struct e1000_adapter *adapter)
 {
-	if (adapter->msix_entries) {
-		pci_disable_msix(adapter->pdev);
-		kfree(adapter->msix_entries);
-		adapter->msix_entries = NULL;
-	} else if (adapter->flags & FLAG_MSI_ENABLED) {
+	if (adapter->flags & FLAG_MSI_ENABLED) {
 		pci_disable_msi(adapter->pdev);
 		adapter->flags &= ~FLAG_MSI_ENABLED;
 	}
@@ -32,28 +25,6 @@ void e1000e_set_interrupt_capability(struct e1000_adapter *adapter)
 	int i;
 
 	switch (adapter->int_mode) {
-	case E1000E_INT_MODE_MSIX:
-		if (adapter->flags & FLAG_HAS_MSIX) {
-			adapter->num_vectors = 3; /* RxQ0, TxQ0 and other */
-			adapter->msix_entries = kcalloc(adapter->num_vectors,
-							sizeof(struct
-							       msix_entry),
-							GFP_KERNEL);
-			if (adapter->msix_entries) {
-				for (i = 0; i < adapter->num_vectors; i++)
-					adapter->msix_entries[i].entry = i;
-
-				err = pci_enable_msix(adapter->pdev,
-						      adapter->msix_entries,
-						      adapter->num_vectors);
-				if (err == 0)
-					return;
-			}
-			/* MSI-X failed, so fall through and try MSI */
-			e_err("Failed to initialize MSI-X interrupts.  Falling back to MSI interrupts.\n");
-			e1000e_reset_interrupt_capability(adapter);
-		}
-		adapter->int_mode = E1000E_INT_MODE_MSI;
 		/* Fall through */
 	case E1000E_INT_MODE_MSI:
 		if (!pci_enable_msi(adapter->pdev)) {
@@ -83,15 +54,6 @@ static int e1000_request_irq(struct e1000_adapter *adapter)
 	struct net_device *netdev = adapter->netdev;
 	int err;
 
-	if (adapter->msix_entries) {
-		err = e1000_request_msix(adapter);
-		if (!err)
-			return err;
-		/* fall back to MSI */
-		e1000e_reset_interrupt_capability(adapter);
-		adapter->int_mode = E1000E_INT_MODE_MSI;
-		e1000e_set_interrupt_capability(adapter);
-	}
 	if (adapter->flags & FLAG_MSI_ENABLED) {
 		err = request_irq(adapter->pdev->irq, e1000_intr_msi, 0,
 				  netdev->name, netdev);
@@ -115,20 +77,6 @@ static void e1000_free_irq(struct e1000_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
 
-	if (adapter->msix_entries) {
-		int vector = 0;
-
-		free_irq(adapter->msix_entries[vector].vector, netdev);
-		vector++;
-
-		free_irq(adapter->msix_entries[vector].vector, netdev);
-		vector++;
-
-		/* Other Causes interrupt vector */
-		free_irq(adapter->msix_entries[vector].vector, netdev);
-		return;
-	}
-
 	free_irq(adapter->pdev->irq, netdev);
 }
 
@@ -140,15 +88,9 @@ static void e1000_irq_disable(struct e1000_adapter *adapter)
 	struct e1000_hw *hw = &adapter->hw;
 
 	ew32(IMC, ~0);
-	if (adapter->msix_entries)
-		ew32(EIAC_82574, 0);
 	e1e_flush();
 
-	if (adapter->msix_entries) {
-		int i;
-		for (i = 0; i < adapter->num_vectors; i++)
-			synchronize_irq(adapter->msix_entries[i].vector);
-	} else {
+	{
 		synchronize_irq(adapter->pdev->irq);
 	}
 }
@@ -160,10 +102,7 @@ static void e1000_irq_enable(struct e1000_adapter *adapter)
 {
 	struct e1000_hw *hw = &adapter->hw;
 
-	if (adapter->msix_entries) {
-		ew32(EIAC_82574, adapter->eiac_mask & E1000_EIAC_MASK_82574);
-		ew32(IMS, adapter->eiac_mask | E1000_IMS_OTHER | E1000_IMS_LSC);
-	} else if (hw->mac.type == e1000_pch_lpt) {
+	if (hw->mac.type == e1000_pch_lpt) {
 		ew32(IMS, IMS_ENABLE_MASK | E1000_IMS_ECCER);
 	} else {
 		ew32(IMS, IMS_ENABLE_MASK);
@@ -171,7 +110,35 @@ static void e1000_irq_enable(struct e1000_adapter *adapter)
 	e1e_flush();
 }
 
-#include "_netdev_intr_msix.h"
 #include "_netdev_intr_msi.h"
 #include "_netdev_intr_legacy.h"
+
+#ifdef CONFIG_NET_POLL_CONTROLLER
+
+/**
+ * e1000_netpoll
+ * @netdev: network interface device structure
+ *
+ * Polling 'interrupt' - used by things like netconsole to send skbs
+ * without having to re-enable interrupts. It's not called while
+ * the interrupt routine is executing.
+ */
+static void e1000_netpoll(struct net_device *netdev)
+{
+	struct e1000_adapter *adapter = netdev_priv(netdev);
+
+	switch (adapter->int_mode) {
+	case E1000E_INT_MODE_MSI:
+		disable_irq(adapter->pdev->irq);
+		e1000_intr_msi(adapter->pdev->irq, netdev);
+		enable_irq(adapter->pdev->irq);
+		break;
+	default:		/* E1000E_INT_MODE_LEGACY */
+		disable_irq(adapter->pdev->irq);
+		e1000_intr(adapter->pdev->irq, netdev);
+		enable_irq(adapter->pdev->irq);
+		break;
+	}
+}
+#endif
 
