@@ -1052,13 +1052,11 @@ static int e1000_open(struct net_device *netdev)
 	 * ignore e1000e MSI messages, which means we need to test our MSI
 	 * interrupt now
 	 */
-	if (adapter->int_mode != E1000E_INT_MODE_LEGACY) {
 		err = e1000_test_msi(adapter);
 		if (err) {
 			e_err("Interrupt allocation failed\n");
 			goto err_req_irq;
 		}
-	}
 
 	/* From here on the code is the same as e1000e_up() */
 	clear_bit(__E1000_DOWN, &adapter->state);

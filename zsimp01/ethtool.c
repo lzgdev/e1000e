@@ -978,7 +978,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 	u32 irq = adapter->pdev->irq;
 	int i;
 	int ret_val = 0;
-	int int_mode = E1000E_INT_MODE_LEGACY;
+	int int_mode = E1000E_INT_MODE_MSI;
 
 	*data = 0;
 

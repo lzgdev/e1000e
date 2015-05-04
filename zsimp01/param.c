@@ -408,12 +408,6 @@ void e1000e_check_options(struct e1000_adapter *adapter)
 		static struct e1000_option opt = {
 			.type = range_option,
 			.name = "Interrupt Mode",
-#ifndef CONFIG_PCI_MSI
-			.err  = "defaulting to 0 (legacy)",
-			.def  = E1000E_INT_MODE_LEGACY,
-			.arg  = { .r = { .min = 0,
-					 .max = 0 } }
-#endif
 		};
 
 #ifdef CONFIG_PCI_MSI

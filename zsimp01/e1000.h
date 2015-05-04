@@ -63,7 +63,6 @@ struct e1000_info;
 	netdev_notice(adapter->netdev, format, ## arg)
 
 /* Interrupt modes, as used by the IntMode parameter */
-#define E1000E_INT_MODE_LEGACY		0
 #define E1000E_INT_MODE_MSI		1
 
 /* Tx/Rx descriptor defines */

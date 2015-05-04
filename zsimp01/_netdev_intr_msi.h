@@ -141,12 +141,7 @@ static int e1000_test_msi_interrupt(struct e1000_adapter *adapter)
 
 	rmb();			/* read flags after interrupt has been fired */
 
-	if (adapter->flags & FLAG_MSI_TEST_FAILED) {
-		adapter->int_mode = E1000E_INT_MODE_LEGACY;
-		e_info("MSI interrupt test failed, using legacy interrupt.\n");
-	} else {
 		e_dbg("MSI interrupt test succeeded!\n");
-	}
 
 	free_irq(adapter->pdev->irq, netdev);
 	pci_disable_msi(adapter->pdev);

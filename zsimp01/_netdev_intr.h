@@ -2,9 +2,6 @@
 // _netdev_intr_msi.h
 static irqreturn_t e1000_intr_msi(int __always_unused irq, void *data);
 
-// _netdev_intr_legacy.h
-static irqreturn_t e1000_intr(int __always_unused irq, void *data);
-
 void e1000e_reset_interrupt_capability(struct e1000_adapter *adapter)
 {
 	if (adapter->flags & FLAG_MSI_ENABLED) {
@@ -29,14 +26,8 @@ void e1000e_set_interrupt_capability(struct e1000_adapter *adapter)
 	case E1000E_INT_MODE_MSI:
 		if (!pci_enable_msi(adapter->pdev)) {
 			adapter->flags |= FLAG_MSI_ENABLED;
-		} else {
-			adapter->int_mode = E1000E_INT_MODE_LEGACY;
-			e_err("Failed to initialize MSI interrupts.  Falling back to legacy interrupts.\n");
 		}
 		/* Fall through */
-	case E1000E_INT_MODE_LEGACY:
-		/* Don't do anything; this is the system default */
-		break;
 	}
 
 	/* store the number of vectors being used */
@@ -62,13 +53,7 @@ static int e1000_request_irq(struct e1000_adapter *adapter)
 
 		/* fall back to legacy interrupt */
 		e1000e_reset_interrupt_capability(adapter);
-		adapter->int_mode = E1000E_INT_MODE_LEGACY;
 	}
-
-	err = request_irq(adapter->pdev->irq, e1000_intr, IRQF_SHARED,
-			  netdev->name, netdev);
-	if (err)
-		e_err("Unable to allocate interrupt, Error: %d\n", err);
 
 	return err;
 }
@@ -111,7 +96,6 @@ static void e1000_irq_enable(struct e1000_adapter *adapter)
 }
 
 #include "_netdev_intr_msi.h"
-#include "_netdev_intr_legacy.h"
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
 
@@ -131,11 +115,6 @@ static void e1000_netpoll(struct net_device *netdev)
 	case E1000E_INT_MODE_MSI:
 		disable_irq(adapter->pdev->irq);
 		e1000_intr_msi(adapter->pdev->irq, netdev);
-		enable_irq(adapter->pdev->irq);
-		break;
-	default:		/* E1000E_INT_MODE_LEGACY */
-		disable_irq(adapter->pdev->irq);
-		e1000_intr(adapter->pdev->irq, netdev);
 		enable_irq(adapter->pdev->irq);
 		break;
 	}
